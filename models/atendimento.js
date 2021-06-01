@@ -1,72 +1,81 @@
 const moment = require('moment')
 const atendimento = require('../controllers/atendimento')
-const conexao = require('../infraestrutura/conexao')
+const conexao = require('../infraestrutura/database/conexao')
+const axios = require('axios')
+const repositorio = require("../repositorios/atendimento")
 
 class Atendimento {
-    adiciona(atendimento, res) {
-        // a ? significa que o parametro que estamos recebendo vai ser colocado li na query
-        const dataCriacao = moment().format('YYYY-MM-DD HH:MM:SS')
-        const data = moment(atendimento.data).format('YYYY-MM-DD HH:MM:SS')
-        // formatando a data do agendamento
-        const dataEhValida = moment(data).isSameOrAfter(dataCriacao)
-        const clienteEhValida = atendimento.cliente.length >= 4
+    constructor(){
 
-        const validacoes = [
+        this.dataEhValida = ({data, dataCriacao}) => moment(data).isSameOrAfter(dataCriacao);
+        this.clienteEhValida = (tamanho) => tamanho >= 4;
+        this.valida = parametros => this.validacoes.filter(campo => {
+            const { nome } = campo;
+            const parametro = parametros[nome];
+
+            return !campo.valido(parametro)
+        })
+
+        this.validacoes = [
             {
                 nome : "data",
-                valido : dataEhValida,
+                valido : this.dataEhValida,
                 mensagem: "Data deve ser maior ou igual a data atual"
             },
             {
                 nome : "cliente",
-                valido : clienteEhValida,
+                valido : this.clienteEhValida,
                 mensagem : "O nome do cliente deve ter pelo menos 4 caracteres"
             }
         ]
+    }
+    adiciona(atendimento) {
+        // a ? significa que o parametro que estamos recebendo vai ser colocado li na query
+        const dataCriacao = moment().format('YYYY-MM-DD HH:MM:SS')
+        const data = moment(atendimento.data).format('YYYY-MM-DD HH:MM:SS')
+        // formatando a data do agendamento
+        
+        const parametros = {
+            data: {data, dataCriacao},
+            cliente: {tamanho: atendimento.cliente.length}
+        }
 
-        const erros = validacoes.filter(campo => !campo.valido)
+        const erros = this.valida(parametros)
         const existemErros = erros.length
 
         if(existemErros){
-            res.status(400).json(erros)
+            return new Promise((resolve, reject) => {
+                reject(erros)
+            })
         } else {
             const atendimentoDatado = {...atendimento, dataCriacao, data}
-            const sql = "INSERT INTO atendimentos SET ?";
-    
-            conexao.query(sql, atendimentoDatado, (erro, resultados) => {
-                if(erro){
-                    res.status(400).json(erro)
-                }else{
-                    res.status(201).json(atendimento)
-                }
-            })
+
+            return repositorio.adiciona(atendimentoDatado)
+                .then(resultados => {
+                    const id = resultados.insertId;
+                    return {...atendimento, id}
+                })
         }
 
 
     }
 
-    lista(res) {
-        const sql = `SELECT * FROM atendimentos`
-
-        conexao.query(sql, (erro, resultados) => {
-            if(erro){
-                res.status(400).json(erro)
-            } else {
-                res.status(200).json(resultados)
-            }
-        })
-
+    lista() {
+        return repositorio.lista();        
     }
 
     buscaPorId(id, res) {
         const sql = `SELECT * FROM atendimentos WHERE id=${id}`
 
-        conexao.query(sql, (erro, resultados) => {
-            const resultado = resultados[0]
+        conexao.query(sql, async (erro, resultados) => {
+            const atendimento = resultados[0]
+            const cpf = atendimento.cliente
             if(erro){
                 res.status(400).json(erro)
             }else{
-                res.status(200).send(resultado)
+                const { data } = await axios.get(`http://localhost:8082/${cpf}`)
+                atendimento.cliente = data;
+                res.status(200).send(atendimento)
             }
         })
     }
